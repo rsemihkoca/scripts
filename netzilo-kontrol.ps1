@@ -1,51 +1,73 @@
-# Netzilo "Workspace Apps" karsilastirma - SADECE OKUR, hicbir seyi degistirmez.
-# Anahtar/token yazdirmaz. Cikti otomatik panoya kopyalanir.
+# Netzilo kontrol - SADECE OKUR, hicbir seyi degistirmez. Anahtar/token yazdirmaz.
 # Calistirma:  irm https://raw.githubusercontent.com/rsemihkoca/scripts/main/netzilo-kontrol.ps1 | iex
 
-$__nzOut = & {
+& {
 $ErrorActionPreference = 'SilentlyContinue'
-$nz = 'C:\ProgramData\Netzilo'
+$nz  = 'C:\ProgramData\Netzilo'
+$cli = 'C:\ProgramData\Netzilo Client\netzilo.exe'
 
-"===== Netzilo surumu ====="
-(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' |
-    Where-Object DisplayName -match 'Netzilo' | Select-Object -First 1).DisplayVersion
-
-"===== Baglanti durumu ====="
-& 'C:\ProgramData\Netzilo Client\netzilo.exe' status 2>&1 |
-    Select-String 'version|Management|Signal|Peers count|Netzilo IP'
-
-"===== Workspace Apps klasoru ====="
-$desktops = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) +
-    (Get-ChildItem $env:USERPROFILE -Directory -Filter 'OneDrive*' | ForEach-Object { Join-Path $_.FullName 'Desktop' })
-$found = $false
-foreach ($d in $desktops | Where-Object { $_ -and (Test-Path $_) }) {
-    Get-ChildItem $d -Directory -Force | Where-Object Name -match 'Workspace' | ForEach-Object {
-        $found = $true
-        "Bulundu: $($_.FullName)  (olusma: $($_.CreationTime))"
-        $sh = New-Object -ComObject WScript.Shell
-        Get-ChildItem $_.FullName -Force | ForEach-Object {
-            if ($_.Extension -eq '.lnk') { $l = $sh.CreateShortcut($_.FullName); "  $($_.Name) -> $($l.TargetPath) $($l.Arguments)" }
-            else { "  $($_.Name)" }
-        }
-    }
+function Show($label, $value, $ok) {
+    $color = if ($ok -eq $true) { 'Green' } elseif ($ok -eq $false) { 'Red' } else { 'Gray' }
+    Write-Host ('{0,-15}: ' -f $label) -NoNewline
+    Write-Host $value -ForegroundColor $color
 }
-if (-not $found) { "YOK" }
 
-"===== Ek suruculer / diskler ====="
-Get-PSDrive -PSProvider FileSystem | ForEach-Object { "$($_.Name): $($_.Description)" }
+Write-Host ''
+Write-Host ("=== Netzilo Kontrol | {0} | {1} ===" -f $env:COMPUTERNAME, (Get-Date -Format 'yyyy-MM-dd HH:mm')) -ForegroundColor Cyan
 
-"===== Kurulum logu (hangi installer, config indi mi) ====="
-Get-Content "$nz\netzilo_offline_nsis_install.log"
+# Surum
+$ver = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' |
+        Where-Object DisplayName -match 'Netzilo' | Select-Object -First 1).DisplayVersion
+if (-not $ver) { Show 'Netzilo' 'KURULU DEGIL' $false; Write-Host ''; return }
 
-"===== client.log icinde workspace izleri ====="
-$hits = Select-String -Path "$nz\client.log" -Pattern 'workspace|container|sandbox|nzfs|desktop folder|shortcut'
-"Eslesen satir: $(@($hits).Count)"
-$hits | Select-Object -Last 15 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(200, $_.Line.Length)) }
+$st = (& $cli status 2>&1 | Out-String)
+function Get-Field($name) { if ($st -match "(?m)^$name\s*:\s*(.+)$") { $Matches[1].Trim() } else { '?' } }
+$daemon = Get-Field 'Daemon version'
+Show 'Surum' "$ver (daemon $daemon)"
 
-"===== Kayit (FQDN) gecmisi ====="
-Select-String -Path "$nz\client.log" -Pattern 'engine started, FQDN' |
-    ForEach-Object { $_.Line.Substring(0, [Math]::Min(160, $_.Line.Length)) }
-} 2>&1 | Out-String
+# Servisler
+$svc = Get-Service Netzilo, NtzlSvc
+$svcOk = (@($svc | Where-Object Status -ne 'Running').Count -eq 0) -and (@($svc).Count -eq 2)
+Show 'Servisler' (($svc | ForEach-Object { "$($_.Name)=$($_.Status)" }) -join ', ') $svcOk
 
-$__nzOut
-try { $__nzOut | Set-Clipboard; '>> Cikti panoya kopyalandi. Direkt yapistirip gonderebilirsin.' } catch { '>> Panoya kopyalanamadi, ustteki ciktiyi elle kopyala.' }
+# Baglanti
+$mgmt = Get-Field 'Management'; $sig = Get-Field 'Signal'; $peers = Get-Field 'Peers count'
+$peerOk = $peers -match '^(\d+)/(\d+)' -and [int]$Matches[2] -gt 0 -and $Matches[1] -eq $Matches[2]
+Show 'Baglanti' "Management=$mgmt, Signal=$sig, Peers=$peers" ($mgmt -eq 'Connected' -and $sig -eq 'Connected' -and $peerOk)
+
+# Cihaz kaydi
+$fqdn = (Get-Field 'FQDN') -replace '\.netzilo\.network$', ''
+Show 'Cihaz adi' $fqdn
+$regs = @(Select-String -Path "$nz\client.log" -Pattern 'engine started, FQDN: ([^ ]+?)\.netzilo\.network' |
+          ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -Unique)
+Show 'Kayit sayisi' ("{0}  ({1})" -f $regs.Count, ($regs -join ', ')) ($regs.Count -le 1)
+
+# Workspace Apps klasoru
+$desktops = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) +
+            @(Get-ChildItem $env:USERPROFILE -Directory -Filter 'OneDrive*' | ForEach-Object { Join-Path $_.FullName 'Desktop' })
+$ws = $desktops | Where-Object { $_ -and (Test-Path $_) } |
+      ForEach-Object { Get-ChildItem $_ -Directory -Force | Where-Object Name -match 'Workspace' } | Select-Object -First 1
+if ($ws) {
+    $items = @(Get-ChildItem $ws.FullName -Force)
+    Show 'Workspace Apps' ("VAR, {0} kisayol: {1}" -f $items.Count, (($items | ForEach-Object BaseName) -join ', ')) $true
+    $lnk = $items | Where-Object Extension -eq '.lnk' | Select-Object -First 1
+    if ($lnk) { $l = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk.FullName); Show 'Ornek kisayol' "$($l.TargetPath) $($l.Arguments)" }
+} else {
+    Show 'Workspace Apps' 'YOK' $false
+}
+$wsLog = @(Select-String -Path "$nz\client.log" -Pattern 'workspace|container|sandbox|nzfs').Count
+Show 'Workspace log' "$wsLog satir" ($wsLog -gt 0)
+
+# Installer + config indirme
+$inst = Get-Content "$nz\netzilo_offline_nsis_install.log" -Raw
+if ($inst) {
+    $runs = $inst -split '--- Installation Log ---' | Where-Object { $_ -match 'Installer:' }
+    foreach ($r in $runs) {
+        $name = if ($r -match 'Installer:\s*"([^"]+)"') { Split-Path $Matches[1] -Leaf } else { '?' }
+        $res  = if ($r -match '(?m)^download config\.json (?!from)(\S+)') { $Matches[1] } else { '?' }
+        Show 'Installer' "$name -> config $res" ($res -ne 'FAIL')
+    }
+} else { Show 'Installer' 'log yok' }
+
+Write-Host ''
+}

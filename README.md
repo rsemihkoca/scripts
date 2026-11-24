@@ -14,4 +14,4 @@ irm https://raw.githubusercontent.com/rsemihkoca/scripts/main/<dosya>.ps1 | iex
 
 | Script | Ne yapar | Komut |
 |---|---|---|
-| `netzilo-kontrol.ps1` | Netzilo kurulumunu ve "Workspace Apps" klasörünü kontrol eder. Sadece okur, hiçbir şeyi değiştirmez; çıktıyı panoya kopyalar. | `irm https://raw.githubusercontent.com/rsemihkoca/scripts/main/netzilo-kontrol.ps1 \| iex` |
+| `netzilo-kontrol.ps1` | Netzilo kurulumunu ve "Workspace Apps" klasörünü kontrol eder. Sadece okur, hiçbir şeyi değiştirmez; kısa bir özet yazdırır. | `irm https://raw.githubusercontent.com/rsemihkoca/scripts/main/netzilo-kontrol.ps1 \| iex` |
